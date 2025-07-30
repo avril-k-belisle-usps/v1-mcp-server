@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "versionone": {
+      "command": "uv",
+      "args": ["run", "server", "stdio"],
+      "env": {
+        "VERSIONONE_BASE_URL": "https://your-v1-host.com/YourInstance",
+        "VERSIONONE_ACCESS_TOKEN": "your-access-token-here"
+      }
+    }
+  }
+} 

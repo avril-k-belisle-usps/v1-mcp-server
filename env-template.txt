@@ -1,0 +1,12 @@
+# VersionOne Configuration
+# Copy this file to .env and fill in your actual values
+
+# Your VersionOne base URL (e.g., https://www7.v1host.com/V1Instance)
+VERSIONONE_BASE_URL=https://your-v1-host.com/YourInstance
+
+# Your VersionOne access token (recommended) or use username:password with Basic auth
+VERSIONONE_ACCESS_TOKEN=your-access-token-here
+
+# Optional: Username and password (if not using access token)
+# VERSIONONE_USERNAME=your-username
+# VERSIONONE_PASSWORD=your-password 
