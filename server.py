@@ -6,6 +6,7 @@ A simplified Model Context Protocol server for VersionOne API integration.
 """
 
 import os
+from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
@@ -13,8 +14,21 @@ from pydantic import BaseModel, Field
 
 from mcp.server.fastmcp import FastMCP
 
+
+# Persistent client instance — set during lifespan startup
+client: "VersionOneClient | None" = None
+
+
+@asynccontextmanager
+async def lifespan(server):
+    global client
+    client = VersionOneClient()
+    yield
+    await client.close()
+
+
 # Create the FastMCP server
-mcp = FastMCP("VersionOne")
+mcp = FastMCP("VersionOne", lifespan=lifespan)
 
 
 class StoryData(BaseModel):
@@ -73,15 +87,19 @@ class VersionOneClient:
             'Accept': 'application/json',
             'Content-Type': 'application/json'
         }
-    
+        # Persistent HTTP client - connection pool reused across all tool calls
+        self._http_client = httpx.AsyncClient(headers=self.headers, timeout=30.0)
+
+    async def close(self):
+        """Release the persistent HTTP connection pool."""
+        await self._http_client.aclose()
+
     async def _make_request(self, endpoint: str, params: dict | None = None) -> dict[str, Any]:
         """Make HTTP request to VersionOne API."""
         url = f"{self.base_url.rstrip('/')}/rest-1.v1/Data/{endpoint}"
-        
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=self.headers, params=params, timeout=30.0)
-            response.raise_for_status()
-            return response.json()
+        response = await self._http_client.get(url, params=params)
+        response.raise_for_status()
+        return response.json()
     
     def _extract_story_data(self, asset: dict) -> StoryData:
         """Extract story data from VersionOne asset."""
@@ -119,12 +137,10 @@ class VersionOneClient:
         return owner.get('value')
 
 
-# Global client instance
-client = VersionOneClient()
 
 
 @mcp.tool()
-def get_stories(
+async def get_stories(
     where_filter: str = "AssetState!=\"Dead\"",
     select_fields: str = "Name,Number,Status,Owner",
     page_size: int = 20,
@@ -138,51 +154,34 @@ def get_stories(
         page_size: Number of items per page (default: 20)
         page_start: Starting page number (default: 0)
     """
-    import asyncio
-    
     params = {
         'where': where_filter,
         'sel': select_fields,
         'pageSize': page_size,
         'pageStart': page_start
     }
-    
-    async def _get_stories():
-        result = await client._make_request('Story', params)
-        stories = [client._extract_story_data(asset) for asset in result.get('Assets', [])]
-        return StoriesResponse(total=result.get('total', 0), stories=stories)
-    
-    return asyncio.run(_get_stories())
+    result = await client._make_request('Story', params)
+    stories = [client._extract_story_data(asset) for asset in result.get('Assets', [])]
+    return StoriesResponse(total=result.get('total', 0), stories=stories)
 
 
 @mcp.tool()
-def get_story_details(story_id: str) -> StoryData:
+async def get_story_details(story_id: str) -> StoryData:
     """Get detailed information about a specific story by ID.
     
     Args:
         story_id: The ID of the story (e.g., 'Story:1234')
     """
-    import asyncio
-    
     params = {
         'sel': 'Name,Number,Description,Status,Owner,CreateDate,ChangeDate'
     }
-    
-    async def _get_story_details():
-        # Extract just the ID part if full ID is provided
-        if ':' in story_id:
-            story_num = story_id.split(':')[1]
-        else:
-            story_num = story_id
-            
-        result = await client._make_request(f'Story/{story_num}', params)
-        return client._extract_story_data(result)
-    
-    return asyncio.run(_get_story_details())
+    story_num = story_id.split(':')[1] if ':' in story_id else story_id
+    result = await client._make_request(f'Story/{story_num}', params)
+    return client._extract_story_data(result)
 
 
 @mcp.tool()
-def get_features(
+async def get_features(
     where_filter: str = "AssetState!=\"Dead\"",
     select_fields: str = "Name,Number,Status,Owner",
     page_size: int = 20,
@@ -196,44 +195,27 @@ def get_features(
         page_size: Number of items per page (default: 20)
         page_start: Starting page number (default: 0)
     """
-    import asyncio
-    
     params = {
         'where': where_filter,
         'sel': select_fields,
         'pageSize': page_size,
         'pageStart': page_start
     }
-    
-    async def _get_features():
-        result = await client._make_request('Epic', params)
-        features = [client._extract_feature_data(asset) for asset in result.get('Assets', [])]
-        return FeaturesResponse(total=result.get('total', 0), features=features)
-    
-    return asyncio.run(_get_features())
+    result = await client._make_request('Epic', params)
+    features = [client._extract_feature_data(asset) for asset in result.get('Assets', [])]
+    return FeaturesResponse(total=result.get('total', 0), features=features)
 
 
 @mcp.tool()
-def get_feature_details(feature_id: str) -> FeatureData:
+async def get_feature_details(feature_id: str) -> FeatureData:
     """Get detailed information about a specific feature by ID.
     
     Args:
         feature_id: The ID of the feature/epic (e.g., 'Epic:1234')
     """
-    import asyncio
-    
     params = {
         'sel': 'Name,Number,Description,Status,Owner,CreateDate,ChangeDate'
     }
-    
-    async def _get_feature_details():
-        # Extract just the ID part if full ID is provided
-        if ':' in feature_id:
-            feature_num = feature_id.split(':')[1]
-        else:
-            feature_num = feature_id
-            
-        result = await client._make_request(f'Epic/{feature_num}', params)
-        return client._extract_feature_data(result)
-    
-    return asyncio.run(_get_feature_details()) 
+    feature_num = feature_id.split(':')[1] if ':' in feature_id else feature_id
+    result = await client._make_request(f'Epic/{feature_num}', params)
+    return client._extract_feature_data(result) 
